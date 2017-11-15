@@ -78,7 +78,8 @@ urlpatterns = patterns('',
                        url(r'^search/$', TemplateView.as_view(template_name='search/search.html'), name='search'),
 
                        # Social views
-                       (r"^account/", include("account.urls")),
+                       (r"^account/", include("allauth.urls")),
+                       (r"^invitations/", include('invitations.urls', namespace="invitations")),
                        (r'^people/', include('geonode.people.urls')),
                        (r'^avatar/', include('avatar.urls')),
                        # (r'^comments/', include('dialogos.urls')),
@@ -93,6 +94,7 @@ urlpatterns = patterns('',
                        # Accounts
                        url(r'^account/ajax_login$', 'geonode.views.ajax_login', name='account_ajax_login'),
                        url(r'^account/ajax_lookup$', 'geonode.views.ajax_lookup', name='account_ajax_lookup'),
+                       url(r'^account/moderation_sent/(?P<inactive_user>[^/]*)$', 'geonode.views.moderator_contacted', name='moderator_contacted'),
 
                        # Meta
                        url(r'^lang\.js$', TemplateView.as_view(template_name='lang.js', content_type='text/javascript'),

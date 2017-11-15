@@ -144,3 +144,13 @@ def h_keywords(request):
     from geonode.base.models import HierarchicalKeyword as hk
     keywords = json.dumps(hk.dump_bulk_tree())
     return HttpResponse(content=keywords)
+
+
+def moderator_contacted(request, inactive_user=None):
+    """Used when a user signs up."""
+    user = get_user_model().objects.get(id=inactive_user)
+    return TemplateResponse(
+        request,
+        template="account/admin_approval_sent.html",
+        context={"email": user.email}
+    )

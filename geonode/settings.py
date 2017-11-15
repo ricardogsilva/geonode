@@ -242,9 +242,7 @@ LOCALE_PATHS = os.getenv('LOCALE_PATHS', _DEFAULT_LOCALE_PATHS)
 # Location of url mappings
 ROOT_URLCONF = os.getenv('ROOT_URLCONF', 'geonode.urls')
 
-# Login and logout urls override
-LOGIN_URL = os.getenv('LOGIN_URL', '/account/login/')
-LOGOUT_URL = os.getenv('LOGOUT_URL', '/account/logout/')
+LOGIN_REDIRECT_URL = '/'
 
 # Documents application
 ALLOWED_DOCUMENT_TYPES = [
@@ -355,7 +353,6 @@ INSTALLED_APPS = (
     'django_forms_bootstrap',
 
     # Social
-    'account',
     'avatar',
     'dialogos',
     # 'pinax.comments',
@@ -369,6 +366,13 @@ INSTALLED_APPS = (
     'guardian',
     'oauth2_provider',
     'corsheaders',
+
+    'invitations',
+    # login with external providers
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+
 ) + GEONODE_APPS
 
 MONITORING_ENABLED = False
@@ -450,7 +454,7 @@ TEMPLATES = [
                 'django.core.context_processors.static',
                 'django.core.context_processors.request',
                 'django.contrib.messages.context_processors.messages',
-                'account.context_processors.account',
+                'django.template.context_processors.request',
                 'geonode.context_processors.resource_urls',
                 'geonode.geoserver.context_processors.geoserver_urls',
             ],
@@ -493,6 +497,7 @@ AUTHENTICATION_BACKENDS = (
     'oauth2_provider.backends.OAuth2Backend',
     'django.contrib.auth.backends.ModelBackend',
     'guardian.backends.ObjectPermissionBackend',
+    'allauth.account.auth_backends.AuthenticationBackend',
 )
 
 OAUTH2_PROVIDER = {
@@ -555,18 +560,7 @@ ACTSTREAM_SETTINGS = {
 }
 
 
-# prevent signing up by default
-ACCOUNT_OPEN_SIGNUP = True
 
-ACCOUNT_EMAIL_CONFIRMATION_EMAIL = strtobool(
-    os.getenv('ACCOUNT_EMAIL_CONFIRMATION_EMAIL', 'False')
-)
-ACCOUNT_EMAIL_CONFIRMATION_REQUIRED = strtobool(
-    os.getenv('ACCOUNT_EMAIL_CONFIRMATION_REQUIRED', 'False')
-)
-ACCOUNT_APPROVAL_REQUIRED = strtobool(
-    os.getenv('ACCOUNT_APPROVAL_REQUIRED', 'False')
-)
 
 # Email for users to contact admins.
 THEME_ACCOUNT_CONTACT_EMAIL = os.getenv(
@@ -1067,7 +1061,7 @@ FREETEXT_KEYWORDS_READONLY = False
 
 # notification settings
 NOTIFICATION_ENABLED = True or TEST
-PINAX_NOTIFICATIONS_LANGUAGE_MODEL = "account.Account"
+#PINAX_NOTIFICATIONS_LANGUAGE_MODEL = "people.Profile"
 
 # notifications backends
 _EMAIL_BACKEND = "pinax.notifications.backends.email.EmailBackend"
@@ -1244,3 +1238,13 @@ MAP_CLIENT_USE_CROSS_ORIGIN_CREDENTIALS = strtobool(os.getenv(
     'MAP_CLIENT_USE_CROSS_ORIGIN_CREDENTIALS',
     'False'
 ))
+
+ACCOUNT_OPEN_SIGNUP = True
+ACCOUNT_APPROVAL_REQUIRED = strtobool(
+    os.getenv('ACCOUNT_APPROVAL_REQUIRED', 'False')
+)
+ACCOUNT_ADAPTER = 'geonode.people.adapters.LocalAccountAdapter'
+ACCOUNT_CONFIRM_EMAIL_ON_GET = True
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_EMAIL_VERIFICATION = 'optional'
+SOCIALACCOUNT_ADAPTER = 'geonode.people.adapters.SocialAccountAdapter'
