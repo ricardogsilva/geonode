@@ -167,22 +167,13 @@ def layer_upload(request, template='upload/layer_upload.html'):
         out = {'success': False}
         if form.is_valid():
             title = form.cleaned_data["layer_title"]
-
-            # Replace dots in filename - GeoServer REST API upload bug
-            # and avoid any other invalid characters.
-            # Use the title if possible, otherwise default to the filename
-            if title is not None and len(title) > 0:
+            if title:
                 name_base = title
             else:
-                name_base, __ = os.path.splitext(
-                    form.cleaned_data["base_file"].name)
-                title = slugify(name_base.replace(".", "_"))
+                name_base = os.path.splitext(
+                    form.cleaned_data["base_file"].name)[0]
             name = slugify(name_base.replace(".", "_"))
-
-            if form.cleaned_data["abstract"] is not None and len(form.cleaned_data["abstract"]) > 0:
-                abstract = form.cleaned_data["abstract"]
-            else:
-                abstract = "No abstract provided."
+            abstract = form.cleaned_data["abstract"] or "No abstract provided"
 
             try:
                 # Moved this inside the try/except block because it can raise

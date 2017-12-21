@@ -27,7 +27,7 @@ from django.db import models
 from django.db.models import signals
 from django.contrib.contenttypes.models import ContentType
 from django.conf import settings
-from django.utils.translation import ugettext as _
+from django.utils.translation import ugettext_lazy as _
 from django.core.urlresolvers import reverse
 from django.core.files.storage import FileSystemStorage
 
@@ -46,7 +46,15 @@ csv_exts = ['.csv']
 kml_exts = ['.kml']
 vec_exts = shp_exts + csv_exts + kml_exts
 
-cov_exts = ['.tif', '.tiff', '.geotiff', '.geotif', '.asc']
+cov_exts = [
+    '.asc',
+    '.geotiff',
+    '.geotif',
+    '.kml',
+    '.kmz'
+    '.tif',
+    '.tiff',
+]
 
 TIME_REGEX = (
     ('[0-9]{8}', _('YYYYMMDD')),

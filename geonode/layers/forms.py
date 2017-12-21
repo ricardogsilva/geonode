@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #########################################################################
 #
-# Copyright (C) 2016 OSGeo
+# Copyright (C) 2017 OSGeo
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,12 +18,14 @@
 #
 #########################################################################
 
+import logging
 import os
 import tempfile
 import zipfile
-from autocomplete_light.registry import autodiscover
 
+from autocomplete_light.registry import autodiscover
 from django import forms
+from django.utils.translation import ugettext_lazy as _
 
 from geonode import geoserver, qgis_server
 from geonode.utils import check_ogc_backend
@@ -38,6 +40,11 @@ from geonode.layers.models import Layer, Attribute
 autodiscover() # flake8: noqa
 
 from geonode.base.forms import ResourceBaseForm
+
+from . import uploadhandlers
+
+logger = logging.getLogger(__name__)
+
 
 
 class JSONField(forms.CharField):
@@ -84,6 +91,33 @@ class LayerForm(ResourceBaseForm):
                 )
 
 
+def determine_upload_type(form_cleaned_data):
+    base_file = form_cleaned_data["base_file"]
+    extension = os.path.splitext(base_file.name)[-1].replace(".", "").lower()
+    if zipfile.is_zipfile(base_file):
+        if extension == "kmz":
+            result = "kmz"
+        elif extension == "zip":
+            result = "zip"
+        else:
+            raise NotImplementedError
+    elif extension == "kml":
+        result = "kml"
+    elif extension == "shp":
+        result = "shp"
+    elif extension == "asc":
+        result = "ascii"
+    elif extension in ("tif", "tiff", "geotif", "geotiff"):
+        result = "tiff"
+    else:
+        raise forms.ValidationError(
+            _("Unsupported file type %(value)s"),
+            params={"value": base_file}
+        )
+    return result
+
+
+
 class LayerUploadForm(forms.Form):
     base_file = forms.FileField()
     dbf_file = forms.FileField(required=False)
@@ -116,93 +150,103 @@ class LayerUploadForm(forms.Form):
 
     def clean(self):
         cleaned = super(LayerUploadForm, self).clean()
-        dbf_file = shx_file = prj_file = xml_file = sld_file = None
-        base_name = base_ext = None
-        if zipfile.is_zipfile(cleaned["base_file"]):
-            filenames = zipfile.ZipFile(cleaned["base_file"]).namelist()
-            for filename in filenames:
-                name, ext = os.path.splitext(filename)
-                if ext.lower() == '.shp':
-                    if base_name is not None:
-                        raise forms.ValidationError(
-                            "Only one shapefile per zip is allowed")
-                    base_name = name
-                    base_ext = ext
-                elif ext.lower() == '.dbf':
-                    dbf_file = filename
-                elif ext.lower() == '.shx':
-                    shx_file = filename
-                elif ext.lower() == '.prj':
-                    prj_file = filename
-                elif ext.lower() == '.xml':
-                    xml_file = filename
-                elif ext.lower() == '.sld':
-                    sld_file = filename
-            if base_name is None:
-                raise forms.ValidationError(
-                    "Zip files can only contain shapefile.")
-        else:
-            base_name, base_ext = os.path.splitext(cleaned["base_file"].name)
-            if cleaned["dbf_file"] is not None:
-                dbf_file = cleaned["dbf_file"].name
-            if cleaned["shx_file"] is not None:
-                shx_file = cleaned["shx_file"].name
-            if cleaned["prj_file"] is not None:
-                prj_file = cleaned["prj_file"].name
-            if cleaned["xml_file"] is not None:
-                xml_file = cleaned["xml_file"].name
-            # SLD style only available in GeoServer backend
-            if check_ogc_backend(geoserver.BACKEND_PACKAGE):
-                if cleaned["sld_file"] is not None:
-                    sld_file = cleaned["sld_file"].name
-
-        if not cleaned["metadata_upload_form"] and not cleaned["style_upload_form"] and base_ext.lower() not in (
-                ".shp", ".tif", ".tiff", ".geotif", ".geotiff", ".asc"):
-            raise forms.ValidationError(
-                "Only Shapefiles, GeoTiffs, and ASCIIs are supported. You "
-                "uploaded a %s file" % base_ext)
-        elif cleaned["metadata_upload_form"] and base_ext.lower() not in (".xml"):
-            raise forms.ValidationError(
-                "Only XML files are supported. You uploaded a %s file" %
-                base_ext)
-        elif cleaned["style_upload_form"] and base_ext.lower() not in (".sld"):
-            raise forms.ValidationError(
-                "Only SLD files are supported. You uploaded a %s file" %
-                base_ext)
-
-        if base_ext.lower() == ".shp":
-            if dbf_file is None or shx_file is None:
-                raise forms.ValidationError(
-                    "When uploading Shapefiles, .shx and .dbf files are also required.")
-            dbf_name, __ = os.path.splitext(dbf_file)
-            shx_name, __ = os.path.splitext(shx_file)
-            if dbf_name != base_name or shx_name != base_name:
-                raise forms.ValidationError(
-                    "It looks like you're uploading "
-                    "components from different Shapefiles. Please "
-                    "double-check your file selections.")
-            if prj_file is not None:
-                if os.path.splitext(prj_file)[0] != base_name:
-                    raise forms.ValidationError(
-                        "It looks like you're "
-                        "uploading components from different Shapefiles. "
-                        "Please double-check your file selections.")
-            if xml_file is not None:
-                if os.path.splitext(xml_file)[0] != base_name:
-                    if xml_file.find('.shp') != -1:
-                        # force rename of file so that file.shp.xml doesn't
-                        # overwrite as file.shp
-                        if cleaned.get("xml_file"):
-                            cleaned["xml_file"].name = '%s.xml' % base_name
-            if sld_file is not None:
-                if os.path.splitext(sld_file)[0] != base_name:
-                    if sld_file.find('.shp') != -1:
-                        # force rename of file so that file.shp.xml doesn't
-                        # overwrite as file.shp
-                        if cleaned.get("sld_file"):
-                            cleaned["sld_file"].name = '%s.sld' % base_name
-
+        logger.debug("errors: {}".format(self.errors))
+        upload_handler = uploadhandlers.get_upload_handler(cleaned)
+        upload_handler.validate_form_fields(cleaned, self.files)
+        cleaned["validation_result"] = {
+            "handler": upload_handler,
+        }
         return cleaned
+
+    # def old_clean(self):
+    #     cleaned = super(LayerUploadForm, self).clean()
+    #     dbf_file = shx_file = prj_file = xml_file = sld_file = None
+    #     base_name = base_ext = None
+    #     if zipfile.is_zipfile(cleaned["base_file"]):
+    #         filenames = zipfile.ZipFile(cleaned["base_file"]).namelist()
+    #         for filename in filenames:
+    #             name, ext = os.path.splitext(filename)
+    #             if ext.lower() == '.shp':
+    #                 if base_name is not None:
+    #                     raise forms.ValidationError(
+    #                         "Only one shapefile per zip is allowed")
+    #                 base_name = name
+    #                 base_ext = ext
+    #             elif ext.lower() == '.dbf':
+    #                 dbf_file = filename
+    #             elif ext.lower() == '.shx':
+    #                 shx_file = filename
+    #             elif ext.lower() == '.prj':
+    #                 prj_file = filename
+    #             elif ext.lower() == '.xml':
+    #                 xml_file = filename
+    #             elif ext.lower() == '.sld':
+    #                 sld_file = filename
+    #         if base_name is None:
+    #             raise forms.ValidationError(
+    #                 "Zip files can only contain shapefile.")
+    #     else:
+    #         base_name, base_ext = os.path.splitext(cleaned["base_file"].name)
+    #         if cleaned["dbf_file"] is not None:
+    #             dbf_file = cleaned["dbf_file"].name
+    #         if cleaned["shx_file"] is not None:
+    #             shx_file = cleaned["shx_file"].name
+    #         if cleaned["prj_file"] is not None:
+    #             prj_file = cleaned["prj_file"].name
+    #         if cleaned["xml_file"] is not None:
+    #             xml_file = cleaned["xml_file"].name
+    #         # SLD style only available in GeoServer backend
+    #         if check_ogc_backend(geoserver.BACKEND_PACKAGE):
+    #             if cleaned["sld_file"] is not None:
+    #                 sld_file = cleaned["sld_file"].name
+    #
+    #     if not cleaned["metadata_upload_form"] and not cleaned["style_upload_form"] and base_ext.lower() not in (
+    #             ".shp", ".tif", ".tiff", ".geotif", ".geotiff", ".asc"):
+    #         raise forms.ValidationError(
+    #             "Only Shapefiles, GeoTiffs, and ASCIIs are supported. You "
+    #             "uploaded a %s file" % base_ext)
+    #     elif cleaned["metadata_upload_form"] and base_ext.lower() not in (".xml"):
+    #         raise forms.ValidationError(
+    #             "Only XML files are supported. You uploaded a %s file" %
+    #             base_ext)
+    #     elif cleaned["style_upload_form"] and base_ext.lower() not in (".sld"):
+    #         raise forms.ValidationError(
+    #             "Only SLD files are supported. You uploaded a %s file" %
+    #             base_ext)
+    #
+    #     if base_ext.lower() == ".shp":
+    #         if dbf_file is None or shx_file is None:
+    #             raise forms.ValidationError(
+    #                 "When uploading Shapefiles, .shx and .dbf files are also required.")
+    #         dbf_name, __ = os.path.splitext(dbf_file)
+    #         shx_name, __ = os.path.splitext(shx_file)
+    #         if dbf_name != base_name or shx_name != base_name:
+    #             raise forms.ValidationError(
+    #                 "It looks like you're uploading "
+    #                 "components from different Shapefiles. Please "
+    #                 "double-check your file selections.")
+    #         if prj_file is not None:
+    #             if os.path.splitext(prj_file)[0] != base_name:
+    #                 raise forms.ValidationError(
+    #                     "It looks like you're "
+    #                     "uploading components from different Shapefiles. "
+    #                     "Please double-check your file selections.")
+    #         if xml_file is not None:
+    #             if os.path.splitext(xml_file)[0] != base_name:
+    #                 if xml_file.find('.shp') != -1:
+    #                     # force rename of file so that file.shp.xml doesn't
+    #                     # overwrite as file.shp
+    #                     if cleaned.get("xml_file"):
+    #                         cleaned["xml_file"].name = '%s.xml' % base_name
+    #         if sld_file is not None:
+    #             if os.path.splitext(sld_file)[0] != base_name:
+    #                 if sld_file.find('.shp') != -1:
+    #                     # force rename of file so that file.shp.xml doesn't
+    #                     # overwrite as file.shp
+    #                     if cleaned.get("sld_file"):
+    #                         cleaned["sld_file"].name = '%s.sld' % base_name
+    #
+    #     return cleaned
 
     def write_files(self):
 
