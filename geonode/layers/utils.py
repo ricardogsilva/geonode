@@ -620,6 +620,15 @@ def file_upload(filename, name=None, user=None, title=None, abstract=None,
     return layer
 
 
+def get_uploaded_layer_title(base_file_name, layer_title=None):
+    if layer_title:
+        result = layer_title
+    else:
+        base = os.path.splitext(base_file_name)[0]
+        result = slugify(base.replace(".", "_"))
+    return result
+
+
 def upload(incoming, user=None, overwrite=False,
            name=None, title=None, abstract=None, date=None,
            license=None,

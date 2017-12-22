@@ -18,8 +18,9 @@
 #
 #########################################################################
 
-import uuid
 import logging
+import os.path
+import uuid
 
 from datetime import datetime
 
@@ -28,6 +29,7 @@ from django.db.models import signals
 from django.contrib.contenttypes.models import ContentType
 from django.conf import settings
 from django.utils.translation import ugettext_lazy as _
+from django.core.files import File
 from django.core.urlresolvers import reverse
 from django.core.files.storage import FileSystemStorage
 
@@ -346,10 +348,28 @@ class Layer(ResourceBase):
                          .update(popular_count=models.F('popular_count') + 1)
 
 
+class UploadSessionManager(models.Manager):
+
+    def create_session(self, owner, **saved_files):
+        session = self.model(user=owner)
+        session.full_clean()
+        session.save()
+        for extension, path in saved_files.items():
+            with open(path, "rb") as source:
+                layer_file = LayerFile(
+                    name=extension,
+                    file=File(source, os.path.basename(path)),
+                    upload_session=session
+                )
+            layer_file.full_clean()
+            layer_file.save()
+        return session
+
+
 class UploadSession(models.Model):
 
-    """Helper class to keep track of uploads.
-    """
+    """Helper class to keep track of uploads."""
+    objects = UploadSessionManager()
     date = models.DateTimeField(auto_now=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL)
     processed = models.BooleanField(default=False)
@@ -359,6 +379,8 @@ class UploadSession(models.Model):
 
     def successful(self):
         return self.processed and self.errors is None
+
+
 
 
 class LayerFile(models.Model):

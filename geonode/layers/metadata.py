@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #########################################################################
 #
-# Copyright (C) 2016 OSGeo
+# Copyright (C) 2017 OSGeo
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,19 +21,46 @@
 """Utilities for managing GeoNode resource metadata
 """
 
-# Standard Modules
-import logging
 import datetime
-from lxml import etree
+import logging
 
-# Geonode functionality
-from geonode import GeoNodeException
-# OWSLib functionality
+from lxml import etree
 from owslib.csw import CswRecord
 from owslib.iso import MD_Metadata
 from owslib.fgdc import Metadata
 
+from geonode import GeoNodeException
+from ..base.models import TopicCategory
+from ..base.models import SpatialRepresentationType
+
 LOGGER = logging.getLogger(__name__)
+
+
+def retrieve_xml_metadata(xml_path):
+    with open(xml_path) as fh:
+        xml_string = fh.read()
+    identifier, vals, regions, keywords = set_metadata(xml_string)
+    result = {
+        "metadata_xml": xml_string,
+        "uuid": identifier,
+        "regions": regions,
+        "keywords": keywords
+    }
+    result.update(vals)
+    spatial_rep = result.get("spatial_representation_type")
+    topic_cat = result.get("topic_category")
+    if spatial_rep is not None:
+        result["spatial_representation_type"] = SpatialRepresentationType(
+            identifier=topic_cat)
+    if topic_cat is not None:
+        value, created = TopicCategory.objects.get_or_create(
+            identifier=topic_cat.lower(),
+            defaults={'description': '', 'gn_description': topic_cat}
+        )
+        result["category"] = value
+        del result["topic_category"]
+    return result
+
 
 
 def set_metadata(xml):

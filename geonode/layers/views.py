@@ -27,6 +27,7 @@ import traceback
 import uuid
 import decimal
 import re
+from tempfile import mkdtemp
 
 from django.contrib.gis.geos import GEOSGeometry
 from django.template.response import TemplateResponse
@@ -84,6 +85,9 @@ from geonode.maps.models import Map
 from geonode.geoserver.helpers import (cascading_delete, gs_catalog,
                                        ogc_server_settings, save_style,
                                        extract_name_from_sld, _invalidate_geowebcache_layer)
+
+from . import uploadhandlers
+from . import utils
 
 if check_ogc_backend(geoserver.BACKEND_PACKAGE):
     from geonode.geoserver.helpers import _render_thumbnail
@@ -146,8 +150,63 @@ def _resolve_layer(request, alternate, permission='base.view_resourcebase',
                               **kwargs)
 
 
-# Basic Layer Views #
+def _create_new_style(sld_path, layer_title):
+    saved_layer = Layer.objects.get(alternate=layer_title)
+    if not saved_layer:
+        raise RuntimeError('Failed to process. Could not find matching layer.')
+    with open(sld_path) as fh:
+        sld = fh.read()
+    # Check SLD is valid
+    extract_name_from_sld(gs_catalog, sld, sld_file=sld_path)
+    match = None
+    styles = list(saved_layer.styles.all()) + [
+        saved_layer.default_style]
+    for style in styles:
+        if style and style.name == saved_layer.name:
+            match = style
+            break
+    layer = gs_catalog.get_layer(layer_title)
+    if match is None:
+        try:
+            gs_catalog.create_style(
+                saved_layer.name, sld,
+                raw=True, workspace=settings.DEFAULT_WORKSPACE
+            )
+            style = gs_catalog.get_style(
+                saved_layer.name,
+                workspace=settings.DEFAULT_WORKSPACE
+            ) or gs_catalog.get_style(saved_layer.name)
+            if layer and style:
+                layer.default_style = style
+                gs_catalog.save(layer)
+                saved_layer.default_style = save_style(style)
+        except Exception as e:
+            logger.exception(e)
+    else:
+        style = gs_catalog.get_style(
+            saved_layer.name,
+            workspace=settings.DEFAULT_WORKSPACE
+        ) or gs_catalog.get_style(saved_layer.name)
+        # style.update_body(sld)
+        try:
+            gs_catalog.create_style(
+                saved_layer.name, sld, overwrite=True, raw=True,
+                workspace=settings.DEFAULT_WORKSPACE
+            )
+            style = gs_catalog.get_style(
+                saved_layer.name,
+                workspace=settings.DEFAULT_WORKSPACE
+            ) or gs_catalog.get_style(saved_layer.name)
+            if layer and style:
+                layer.default_style = style
+                gs_catalog.save(layer)
+                saved_layer.default_style = save_style(style)
+        except Exception as e:
+            logger.exception(e)
+    _invalidate_geowebcache_layer(saved_layer.alternate)
+    return saved_layer
 
+# Basic Layer Views #
 
 @login_required
 def layer_upload(request, template='upload/layer_upload.html'):
@@ -161,104 +220,46 @@ def layer_upload(request, template='upload/layer_upload.html'):
         return render_to_response(template, RequestContext(request, ctx))
     elif request.method == 'POST':
         form = NewLayerUploadForm(request.POST, request.FILES)
-        tempdir = None
-        saved_layer = None
         errormsgs = []
         out = {'success': False}
         if form.is_valid():
-            title = form.cleaned_data["layer_title"]
-            if title:
-                name_base = title
-            else:
-                name_base = os.path.splitext(
-                    form.cleaned_data["base_file"].name)[0]
-            name = slugify(name_base.replace(".", "_"))
-            abstract = form.cleaned_data["abstract"] or "No abstract provided"
-
+            temp_dir = mkdtemp(prefix="geonode_upload_temp")
             try:
-                # Moved this inside the try/except block because it can raise
-                # exceptions when unicode characters are present.
-                # This should be followed up in upstream Django.
-                tempdir, base_file = form.write_files()
                 if not form.cleaned_data["style_upload_form"]:
-                    saved_layer = file_upload(
-                        base_file,
-                        name=name,
+                    handler = form.cleaned_data["handler"]
+                    workspace = getattr(
+                        settings, "DEFAULT_WORKSPACE", "geonode")
+                    saved_layer = uploadhandlers.create_geonode_layer(
+                        handler=handler,
                         user=request.user,
-                        overwrite=False,
-                        charset=form.cleaned_data["charset"],
-                        abstract=abstract,
-                        title=title,
-                        metadata_uploaded_preserve=form.cleaned_data[
+                        temporary_directory=temp_dir,
+                        permissions=form.cleaned_data["permissions"],
+                        workspace=workspace,
+                        preserve_metadata=form.cleaned_data[
                             "metadata_uploaded_preserve"],
-                        metadata_upload_form=form.cleaned_data["metadata_upload_form"])
+                    )
+                    saved_layer.handle_moderated_uploads()
                 else:
-                    saved_layer = Layer.objects.get(alternate=title)
-                    if not saved_layer:
-                        msg = 'Failed to process.  Could not find matching layer.'
-                        raise Exception(msg)
-                    sld = open(base_file).read()
-                    # Check SLD is valid
-                    extract_name_from_sld(gs_catalog, sld, sld_file=base_file)
-
-                    match = None
-                    styles = list(saved_layer.styles.all()) + [
-                        saved_layer.default_style]
-                    for style in styles:
-                        if style and style.name == saved_layer.name:
-                            match = style
-                            break
-                    cat = gs_catalog
-                    layer = cat.get_layer(title)
-                    if match is None:
-                        try:
-                            cat.create_style(saved_layer.name, sld, raw=True, workspace=settings.DEFAULT_WORKSPACE)
-                            style = cat.get_style(saved_layer.name, workspace=settings.DEFAULT_WORKSPACE) or \
-                                cat.get_style(saved_layer.name)
-                            if layer and style:
-                                layer.default_style = style
-                                cat.save(layer)
-                                saved_layer.default_style = save_style(style)
-                        except Exception as e:
-                            logger.exception(e)
-                    else:
-                        style = cat.get_style(saved_layer.name, workspace=settings.DEFAULT_WORKSPACE) or \
-                            cat.get_style(saved_layer.name)
-                        # style.update_body(sld)
-                        try:
-                            cat.create_style(saved_layer.name, sld, overwrite=True, raw=True,
-                                             workspace=settings.DEFAULT_WORKSPACE)
-                            style = cat.get_style(saved_layer.name, workspace=settings.DEFAULT_WORKSPACE) or \
-                                cat.get_style(saved_layer.name)
-                            if layer and style:
-                                layer.default_style = style
-                                cat.save(layer)
-                                saved_layer.default_style = save_style(style)
-                        except Exception as e:
-                            logger.exception(e)
-
-                    # Invalidate GeoWebCache for the updated resource
-                    _invalidate_geowebcache_layer(saved_layer.alternate)
-
+                    base_file = form.cleaned_data["base_file"]
+                    sld_path = uploadhandlers.save_django_files(
+                        [base_file], temp_dir)
+                    layer_title = utils.get_uploaded_layer_title(
+                        base_file.name,
+                        layer_title=form.cleaned_data["layer_title"]
+                    )
+                    saved_layer = _create_new_style(sld_path, layer_title)
             except Exception as e:
                 exception_type, error, tb = sys.exc_info()
-                logger.exception(e)
-                out['success'] = False
-                out['errors'] = str(error)
-                # Assign the error message to the latest UploadSession from
-                # that user.
-                latest_uploads = UploadSession.objects.filter(
-                    user=request.user).order_by('-date')
-                if latest_uploads.count() > 0:
-                    upload_session = latest_uploads[0]
-                    upload_session.error = str(error)
-                    upload_session.traceback = traceback.format_exc(tb)
-                    upload_session.context = log_snippet(CONTEXT_LOG_FILE)
-                    upload_session.save()
-                    out['traceback'] = upload_session.traceback
-                    out['context'] = upload_session.context
-                    out['upload_session'] = upload_session.id
+                logger.exception(msg="Could not process upload")
+                out.update({
+                    "success": False,
+                    "errors": str(error),
+                    "traceback": traceback.format_exc(tb),
+                    "context": log_snippet(CONTEXT_LOG_FILE)
+                })
             else:
+                if settings.MONITORING_ENABLED:
+                    request.add_resource('layer', saved_layer.alternate)
                 out['success'] = True
                 if hasattr(saved_layer, 'info'):
                     out['info'] = saved_layer.info
@@ -277,28 +278,18 @@ def layer_upload(request, template='upload/layer_upload.html'):
                 if upload_session:
                     upload_session.processed = True
                     upload_session.save()
-                permissions = form.cleaned_data["permissions"]
-                if permissions is not None and len(permissions.keys()) > 0:
-                    saved_layer.set_permissions(permissions)
-                saved_layer.handle_moderated_uploads()
             finally:
-                if tempdir is not None:
-                    shutil.rmtree(tempdir)
+                shutil.rmtree(temp_dir)
         else:
             for e in form.errors.values():
                 errormsgs.extend([escape(v) for v in e])
             out['errors'] = form.errors
             out['errormsgs'] = errormsgs
-        if out['success']:
-            status_code = 200
-        else:
-            status_code = 400
-        if settings.MONITORING_ENABLED:
-            request.add_resource('layer', saved_layer.alternate if saved_layer else name)
         return HttpResponse(
             json.dumps(out),
             content_type='application/json',
-            status=status_code)
+            status=200 if out["success"] else 400
+        )
 
 
 def layer_detail(request, layername, template='layers/layer_detail.html'):

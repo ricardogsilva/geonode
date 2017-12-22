@@ -91,33 +91,6 @@ class LayerForm(ResourceBaseForm):
                 )
 
 
-def determine_upload_type(form_cleaned_data):
-    base_file = form_cleaned_data["base_file"]
-    extension = os.path.splitext(base_file.name)[-1].replace(".", "").lower()
-    if zipfile.is_zipfile(base_file):
-        if extension == "kmz":
-            result = "kmz"
-        elif extension == "zip":
-            result = "zip"
-        else:
-            raise NotImplementedError
-    elif extension == "kml":
-        result = "kml"
-    elif extension == "shp":
-        result = "shp"
-    elif extension == "asc":
-        result = "ascii"
-    elif extension in ("tif", "tiff", "geotif", "geotiff"):
-        result = "tiff"
-    else:
-        raise forms.ValidationError(
-            _("Unsupported file type %(value)s"),
-            params={"value": base_file}
-        )
-    return result
-
-
-
 class LayerUploadForm(forms.Form):
     base_file = forms.FileField()
     dbf_file = forms.FileField(required=False)
@@ -151,11 +124,9 @@ class LayerUploadForm(forms.Form):
     def clean(self):
         cleaned = super(LayerUploadForm, self).clean()
         logger.debug("errors: {}".format(self.errors))
-        upload_handler = uploadhandlers.get_upload_handler(cleaned)
-        upload_handler.validate_form_fields(cleaned, self.files)
-        cleaned["validation_result"] = {
-            "handler": upload_handler,
-        }
+        handler_class = uploadhandlers.get_upload_handler(cleaned)
+        handler = handler_class(cleaned, self.files)
+        cleaned["handler"] = handler
         return cleaned
 
     # def old_clean(self):
@@ -248,25 +219,25 @@ class LayerUploadForm(forms.Form):
     #
     #     return cleaned
 
-    def write_files(self):
-
-        absolute_base_file = None
-        tempdir = tempfile.mkdtemp()
-
-        if zipfile.is_zipfile(self.cleaned_data['base_file']):
-            absolute_base_file = unzip_file(self.cleaned_data['base_file'], '.shp', tempdir=tempdir)
-
-        else:
-            for field in self.spatial_files:
-                f = self.cleaned_data[field]
-                if f is not None:
-                    path = os.path.join(tempdir, f.name)
-                    with open(path, 'wb') as writable:
-                        for c in f.chunks():
-                            writable.write(c)
-            absolute_base_file = os.path.join(tempdir,
-                                              self.cleaned_data["base_file"].name)
-        return tempdir, absolute_base_file
+    # def write_files(self):
+    #
+    #     absolute_base_file = None
+    #     tempdir = tempfile.mkdtemp()
+    #
+    #     if zipfile.is_zipfile(self.cleaned_data['base_file']):
+    #         absolute_base_file = unzip_file(self.cleaned_data['base_file'], '.shp', tempdir=tempdir)
+    #
+    #     else:
+    #         for field in self.spatial_files:
+    #             f = self.cleaned_data[field]
+    #             if f is not None:
+    #                 path = os.path.join(tempdir, f.name)
+    #                 with open(path, 'wb') as writable:
+    #                     for c in f.chunks():
+    #                         writable.write(c)
+    #         absolute_base_file = os.path.join(tempdir,
+    #                                           self.cleaned_data["base_file"].name)
+    #     return tempdir, absolute_base_file
 
 
 class NewLayerUploadForm(LayerUploadForm):
