@@ -98,6 +98,7 @@ def geoserver_post_save_local(layer_id, *args, **kwargs):
         * Point of Contact name and url
     """
     # If it is a layer object, post process it. If not, abort.
+    logger.debug("Entered geoserver_post_save_local")
     try:
         instance = Layer.objects.get(id=layer_id)
     except Layer.DoesNotExist as e:
@@ -120,7 +121,10 @@ def geoserver_post_save_local(layer_id, *args, **kwargs):
     # If the store in None then it's a new instance from an upload,
     # only in this case run the geoserver_upload method
     if not instance.store or getattr(instance, 'overwrite', False):
+        logger.debug("before calling instance.get_base_file")
         base_file, info = instance.get_base_file()
+        logger.debug("base_file: {}".format(base_file))
+        logger.debug("info: {}".format(info))
 
         # There is no need to process it if there is not file.
         if base_file is None:

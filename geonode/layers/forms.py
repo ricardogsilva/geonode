@@ -124,8 +124,8 @@ class LayerUploadForm(forms.Form):
     def clean(self):
         cleaned = super(LayerUploadForm, self).clean()
         logger.debug("errors: {}".format(self.errors))
-        handler_class = uploadhandlers.get_upload_handler(cleaned)
-        handler = handler_class(cleaned, self.files)
+        logger.debug("form files: {}".format(self.files))
+        handler = uploadhandlers.get_upload_handler(cleaned, self.files)
         cleaned["handler"] = handler
         return cleaned
 

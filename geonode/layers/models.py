@@ -238,6 +238,13 @@ class Layer(ResourceBase):
         """Get the shp or geotiff file for this layer.
         """
 
+        # try:
+        #     base_file = self.upload_session.layerfile_set.get(base=True)
+        # except UploadSession.DoesNotExist:
+        #     pass
+        # except LayerFile.MultipleObjectsReturned:
+        #     pass
+
         # If there was no upload_session return None
         if self.upload_session is None:
             return None, None
@@ -350,7 +357,7 @@ class Layer(ResourceBase):
 
 class UploadSessionManager(models.Manager):
 
-    def create_session(self, owner, **saved_files):
+    def create_session(self, owner, base_extension, **saved_files):
         session = self.model(user=owner)
         session.full_clean()
         session.save()
@@ -359,10 +366,11 @@ class UploadSessionManager(models.Manager):
                 layer_file = LayerFile(
                     name=extension,
                     file=File(source, os.path.basename(path)),
-                    upload_session=session
+                    upload_session=session,
+                    base=extension==base_extension
                 )
-            layer_file.full_clean()
-            layer_file.save()
+                layer_file.full_clean()
+                layer_file.save()
         return session
 
 

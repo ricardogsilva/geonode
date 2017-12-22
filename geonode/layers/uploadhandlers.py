@@ -49,9 +49,11 @@ ShapefileAux = namedtuple("ShapefileAux", [
 ])
 
 
-def get_upload_handler(form_cleaned_data):
-    base_file = form_cleaned_data["base_file"]
-    extension = os.path.splitext(base_file.name)[-1].replace(".", "").lower()
+def get_upload_handler(form_cleaned_data, form_files):
+    files_ = form_files.dict().copy()
+    logger.debug("form_files: {}".format(files_))
+    base_file = files_.pop("base_file")
+    extension = _get_extension(base_file.name)
     if zipfile.is_zipfile(base_file):
         if extension == "kmz":
             handler_class = KmzHandler
@@ -73,13 +75,21 @@ def get_upload_handler(form_cleaned_data):
             params={"value": base_file}
         )
     logger.debug("handler_class: {}".format(handler_class))
-    return handler_class
+    return handler_class.from_form(form_cleaned_data, files_)
+
+
+def get_handler_from_layer_id(id):
+    layer = models.Layer.objects.get(pk=id)
+    layer_files = layer.upload_session.layerfile_set.all()
+    title = layer.title
+    handler = None
 
 
 def create_geonode_layer(handler, user, temporary_directory, permissions,
                          workspace, preserve_metadata=False):
     """Create a new layer in geonode's database"""
     saved_files = handler.save_files(temporary_directory)
+    logger.debug("saved_files: {}".format(saved_files))
     bbox = handler.get_bbox(saved_files)
     if saved_files.get("xml") is not None:
         meta = metadata.retrieve_xml_metadata(saved_files["xml"])
@@ -91,21 +101,28 @@ def create_geonode_layer(handler, user, temporary_directory, permissions,
     layer = handler.instantiate_geonode_layer(
         user,
         bbox,
-        store=handler.get_store_name(saved_files),
         workspace=workspace,
         additional_metadata=meta,
         preserve_uploaded_metadata=preserve_metadata,
     )
-    layer.set_permissions(permissions)
+    logger.debug("unsaved layer: {}".format(layer))
     # TODO: Make sure that layer's name is unique
     if getattr(settings, 'NLP_ENABLED', False):
         additional_info = _extract_additional_info(
             layer.title, layer.abstract, layer.purpose)
-    layer.full_clean()
+    # ideally for every layer that is created manually, we'd call
+    # layer.full_clean() before saving it. Unfortunately that is not
+    # possible at the moment, since geonode makes heavy use of pre_save and
+    # post_save signals to complete the layer.
+    # layer.full_clean()
     with transaction.atomic():
-        session = handler.create_geonode_upload_session(user, **saved_files)
+        session = models.UploadSession.objects.create_session(
+            user, handler.base_extension, **saved_files)
+        logger.debug("upload_session: {}".format(session))
         layer.upload_session = session
         layer.save()
+        logger.debug("saved layer")
+        layer.set_permissions(permissions)
     return layer
 
 
@@ -134,25 +151,34 @@ class BaseHandler(object):
 
     """
 
-    def __init__(self, form_cleaned_data, form_files):
-        self.title = utils.get_uploaded_layer_title(
-            form_cleaned_data["base_file"].name,
-            layer_title=form_cleaned_data["layer_title"],
+    @classmethod
+    def from_form(cls, cleaned_data, files):
+        title = utils.get_uploaded_layer_title(
+            cleaned_data["base_file"].name,
+            layer_title=cleaned_data["layer_title"],
         )
-        self.abstract = form_cleaned_data["abstract"] or _(
-            "No abstract provided")
-        self.charset = form_cleaned_data["charset"] or "utf-8"
+        instance = cls(
+            title,
+            base_file=cleaned_data["base_file"],
+            abstract=cleaned_data["abstract"],
+            charset=cleaned_data["charset"],
+            other_files=files
+        )
+        return instance
 
-    def instantiate_geonode_layer(self, owner, bbox, workspace, store,
+    def __init__(self, title, base_file, abstract=None, charset=None,
+                 other_files=None):
+        self.title = title
+        self.abstract = abstract  or _("No abstract provided")
+        self.charset = charset or "utf-8"
+
+    def instantiate_geonode_layer(self, owner, bbox, workspace,
                                   additional_metadata=None,
                                   preserve_uploaded_metadata=False):
         """Returns a new Layer instance but does not save it in the db."""
         raise NotImplementedError
 
     def get_bbox(self, saved_files):
-        raise NotImplementedError
-
-    def get_store_name(self, saved_files):
         raise NotImplementedError
 
     def save_files(self, destination_dir):
@@ -200,13 +226,18 @@ class ZippedFileHandler(BaseHandler):
 
 class KmzHandler(BaseHandler):
 
-    def __init__(self, form_cleaned_data, form_files):
+    base_extension = "kmz"
+
+    def __init__(self, title, base_file, abstract=None, charset=None,
+                 other_files=None):
         super(KmzHandler, self).__init__(
-            form_cleaned_data, form_files)
-        self.kmz_file = form_cleaned_data["base_file"]
-        if not zipfile.is_zipfile(self.kmz_file):
+            title, base_file, abstract=abstract,
+            charset=charset, other_files=other_files
+        )
+        self.base_file = base_file
+        if not zipfile.is_zipfile(self.base_file):
             raise forms.ValidationError(_("Invalid kmz file detected"))
-        with zipfile.ZipFile(self.kmz_file) as zip_handler:
+        with zipfile.ZipFile(self.base_file) as zip_handler:
             zip_contents = zip_handler.namelist()
             kml_files = [i for i in zip_contents if i.lower().endswith(".kml")]
             try:
@@ -223,26 +254,32 @@ class KmzHandler(BaseHandler):
         _validate_kml(kml_bytes, other_components)
 
     def save_files(self, destination_dir):
-        return save_zipped_file(self.kmz_file, destination_dir)
+        return save_zipped_file(self.base_file, destination_dir)
 
 
 class ShapefileHandler(BaseHandler):
 
-    def __init__(self, form_cleaned_data, form_files):
+    store_type = "dataStore"
+    base_extension = "shp"
+
+    def __init__(self, title, base_file, abstract=None, charset=None,
+                 other_files=None):
         super(ShapefileHandler, self).__init__(
-            form_cleaned_data, form_files)
-        file_names = [f.name for f in form_files.itervalues()]
+            title, base_file, abstract=abstract, charset=charset,
+            other_files=other_files
+        )
+        file_names = [f.name for f in other_files.itervalues()]
+        logger.debug("file_names: {}".format(file_names))
         resources = _validate_shapefile_components(file_names)
         self.files = {}
         for extension, path in resources.items():
-            for django_file in form_files.itervalues():
+            for django_file in other_files.itervalues():
                 if django_file.name == path:
                     self.files[extension] = django_file
                     break
             else:
                 raise RuntimeError(
                     "Could not find django file for {}".format(path))
-        self.store_type = "dataStore"
 
     def save_files(self, destination_dir):
         return save_django_files(self.files.itervalues(), destination_dir)
@@ -250,10 +287,7 @@ class ShapefileHandler(BaseHandler):
     def get_bbox(self, saved_files):
         return utils.get_bbox(saved_files["shp"])
 
-    def get_store_name(self, saved_files):
-        return self.title
-
-    def instantiate_geonode_layer(self, owner, bbox, workspace, store,
+    def instantiate_geonode_layer(self, owner, bbox, workspace,
                                   additional_metadata=None,
                                   preserve_uploaded_metadata=False):
         """Returns a new Layer instance but does not save it in the db."""
@@ -272,7 +306,6 @@ class ShapefileHandler(BaseHandler):
             storeType=self.store_type,
             metadata_uploaded_preserve=preserve_uploaded_metadata,
             workspace=workspace,
-            store=store,
         )
         if additional_metadata:
             meta = additional_metadata.copy()
@@ -291,12 +324,17 @@ class ShapefileHandler(BaseHandler):
 
 class KmlHandler(BaseHandler):
 
-    def __init__(self, form_cleaned_data, form_files):
+    base_extension = "kml"
+
+    def __init__(self, title, base_file, abstract=None, charset=None,
+                 other_files=None):
         super(KmlHandler, self).__init__(
-            form_cleaned_data, form_files)
-        kml_file = form_cleaned_data["base_file"]
+            title, base_file, abstract=abstract,
+            charset=charset, other_files=other_files
+        )
+        kml_file = base_file
         other_files = [
-            i.name for i in form_files.itervalues() if i is not kml_file]
+            i.name for i in other_files.itervalues() if i is not kml_file]
         kml_file.seek(0)
         kml_bytes = kml_file.read()  # TODO: use kml_file.chunks instead?
         result = _validate_kml(kml_bytes, other_files)
@@ -397,6 +435,8 @@ def _validate_shapefile_components(possible_files):
 
     # TODO: Use a more robust way of determining if it is shapefile
     shp_files = [i for i in possible_files if i.lower().endswith(".shp")]
+    logger.debug("possible_files: {}".format(possible_files))
+    logger.debug("shp_files: {}".format(shp_files))
     if len(shp_files) > 1:
         raise forms.ValidationError(_("Only one shapefile per zip is allowed"))
     shape_component = shp_files[0]
