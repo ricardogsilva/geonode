@@ -84,6 +84,7 @@ from .utils import (
 )
 from .upload import (save_step, srs_step, time_step, csv_step, final_step,
                      LayerNotReady, UploaderSession)
+from . import ingestionhandlers
 
 logger = logging.getLogger(__name__)
 
@@ -112,38 +113,6 @@ def data_upload_progress(req):
     return json_response({'state': 'NONE'})
 
 
-def _write_uploaded_files_to_disk(target_dir, files):
-    result = []
-    for django_file in files:
-        path = os.path.join(target_dir, django_file.name)
-        with open(path, 'wb') as fh:
-            for chunk in django_file.chunks():
-                fh.write(chunk)
-        result = path
-    return result
-
-
-def _select_relevant_files(allowed_extensions, files):
-    """Filter the input files list for relevant files only
-
-    Relevant files are those whose extension is in the ``allowed_extensions``
-    iterable.
-
-    :param allowed_extensions: list of strings with the extensions to keep
-    :param files: list of django files with the files to be filtered
-
-    """
-
-    result = []
-    for django_file in files:
-        extension = os.path.splitext(django_file.name)[-1].lower()[1:]
-        if extension in allowed_extensions:
-            already_selected = django_file.name in (f.name for f in result)
-            if not already_selected:
-                result.append(django_file)
-    return result
-
-
 def save_step_view(req, session):
     if req.method == 'GET':
         return render(
@@ -158,24 +127,11 @@ def save_step_view(req, session):
     form = LayerUploadForm(req.POST, req.FILES)
     if form.is_valid():
         tempdir = tempfile.mkdtemp(dir=settings.FILE_UPLOAD_TEMP_DIR)
-        relevant_files = _select_relevant_files(
-            form.cleaned_data["valid_extensions"],
-            req.FILES.itervalues()
-        )
-        _write_uploaded_files_to_disk(tempdir, relevant_files)
-        base_file = os.path.join(tempdir, form.cleaned_data["base_file"].name)
-        name, ext = os.path.splitext(os.path.basename(base_file))
-        logger.debug('Name: {0}, ext: {1}'.format(name, ext))
-        logger.debug("base_file: {}".format(base_file))
-        spatial_files = scan_file(
-            base_file,
-            scan_hint=get_scan_hint(form.cleaned_data["valid_extensions"])
-        )
-        logger.debug("spatial_files: {}".format(spatial_files))
+        upload_handler = form.cleaned_data["upload_handler"]
+        uploaded_paths = upload_handler.write_files()
         import_session = save_step(
             req.user,
-            name,
-            spatial_files,
+            uploaded_paths,
             overwrite=False,
             mosaic=form.cleaned_data['mosaic'],
             append_to_mosaic_opts=form.cleaned_data['append_to_mosaic_opts'],

@@ -62,7 +62,8 @@ from ..geoserver.helpers import (mosaic_delete_first_granule,
 from . import signals
 from . import utils
 from .models import Upload
-from .upload_preprocessing import preprocess_files
+from .ingestionhandlers import get_ingestion_handler
+from .ingestionhandlers import preprocess_files
 
 logger = logging.getLogger(__name__)
 
@@ -284,34 +285,18 @@ def _get_layer_type(spatial_files):
     return the_layer_type
 
 
-def save_step(user, layer, spatial_files, overwrite=True, mosaic=False,
+def save_step(user, uploaded_paths, overwrite=True, mosaic=False,
               append_to_mosaic_opts=None, append_to_mosaic_name=None,
               mosaic_time_regex=None, mosaic_time_value=None,
               time_presentation=None, time_presentation_res=None,
               time_presentation_default_value=None,
               time_presentation_reference_value=None):
-    logger.info(
-        'Uploading layer: {}, files {!r}'.format(layer, spatial_files))
-    if len(spatial_files) > 1:
-        # we only support more than one file if they're rasters for mosaicing
-        if not all(
-                [f.file_type.layer_type == 'coverage' for f in spatial_files]):
-            raise UploadException(
-                "Please upload only one type of file at a time")
-    name = get_valid_layer_name(layer, overwrite)
+    ingestion_handler = get_ingestion_handler(uploaded_paths)
+    name = ingestion_handler.get_name(overwrite=overwrite)
     logger.info('Name for layer: {!r}'.format(name))
-    if not any(spatial_files.all_files()):
-        raise UploadException("Unable to recognize the uploaded file(s)")
-    the_layer_type = _get_layer_type(spatial_files)
+    the_layer_type = ingestion_handler.get_spatial_type()
     _check_geoserver_store(name, the_layer_type, overwrite)
-    if the_layer_type not in (
-            FeatureType.resource_type,
-            Coverage.resource_type):
-        raise RuntimeError("Expected layer type to FeatureType or "
-                           "Coverage, not {}".format(the_layer_type))
-    files_to_upload = preprocess_files(spatial_files)
-    logger.debug("files_to_upload: {}".format(files_to_upload))
-    logger.info('Uploading {}'.format(the_layer_type))
+    files_to_upload = ingestion_handler.preprocess_files()
     error_msg = None
     try:
         next_id = _get_next_id()

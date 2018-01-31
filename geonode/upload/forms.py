@@ -29,7 +29,7 @@ from ..utils import check_ogc_backend
 from ..layers.forms import JSONField
 
 from .models import UploadFile
-from .upload_validators import validate_uploaded_files
+from .uploadhandlers import get_upload_handler
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +93,12 @@ class LayerUploadForm(forms.Form):
     def clean(self):
         cleaned = super(LayerUploadForm, self).clean()
         uploaded_files = self._get_uploaded_files()
-        valid_extensions = validate_uploaded_files(
-            cleaned=cleaned,
-            uploaded_files=uploaded_files,
-            field_spatial_types=self.spatial_files
-        )
-        cleaned["valid_extensions"] = valid_extensions
+        handler = get_upload_handler(uploaded_files)
+        try:
+            handler.validate_files()
+        except RuntimeError as exc:
+            raise forms.ValidationError(exc.message)
+        cleaned["upload_handler"] = handler
         return cleaned
 
     def _get_uploaded_files(self):

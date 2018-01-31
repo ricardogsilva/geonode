@@ -25,7 +25,7 @@ import mock
 import os.path
 
 from geonode.upload import files
-from geonode.upload import upload_preprocessing
+from geonode.upload import ingestionhandlers
 from geonode.upload.utils import get_kml_doc
 
 
@@ -48,7 +48,7 @@ class UploadPreprocessingTestCase(TestCase):
             )
         ]
         spatial_files = files.SpatialFiles(dirname, data)
-        upload_preprocessing.preprocess_files(spatial_files)
+        ingestionhandlers.preprocess_files(spatial_files)
         mock_handler.assert_called_with(kml_path, image_path)
 
     def test_extract_bbox_param(self):
@@ -66,7 +66,7 @@ class UploadPreprocessingTestCase(TestCase):
             </kml>
         """.format(fake_north).strip()
         kml_doc, ns = get_kml_doc(kml_bytes)
-        result = upload_preprocessing._extract_bbox_param(
+        result = ingestionhandlers._extract_bbox_param(
             kml_doc, ns, "north")
         self.assertEqual(result, fake_north)
 
@@ -87,7 +87,7 @@ class UploadPreprocessingTestCase(TestCase):
                                           fake_east, fake_south]
         mock_open = mock.mock_open(read_data=fake_kml_bytes)
         with mock.patch(self.MOCK_PREFIX+".open", mock_open):
-            upload_preprocessing.convert_kml_ground_overlay_to_geotiff(
+            ingestionhandlers.convert_kml_ground_overlay_to_geotiff(
                 "fake_kml_path",
                 fake_other_file_path
             )

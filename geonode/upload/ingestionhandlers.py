@@ -30,8 +30,11 @@ import logging
 import os.path
 import subprocess
 
+from ..layers.utils import get_valid_layer_name
 from .files import get_type
 from .utils import get_kml_doc
+from . import uploadhandlers
+from .uploadhandlers import SHAPEFILE_COMPONENTS
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,58 @@ GdalBoundingBox = namedtuple("GdalBoundingBox", [
     "lrx",
     "lry",
 ])
+
+
+def get_ingestion_handler(paths):
+    extensions = [uploadhandlers.get_file_extension(p) for p in paths]
+    if "shp" in extensions:
+        handler = ShapefileIngestionHandler(paths)
+    else:
+        handler = GenericIngestionHandler()
+    return handler
+
+
+class BaseIngestionHandler(object):
+
+    def __init__(self, paths):
+        self.base_paths = paths
+
+    def get_name(self, overwrite=False):
+        if any(self.base_paths):
+            candidate_name = os.path.splitext(
+                os.path.basename(self.base_paths[0]))[0]
+        else:
+            candidate_name = ""
+        return get_valid_layer_name(candidate_name, overwrite=overwrite)
+
+    def get_spatial_type(self):
+        raise NotImplementedError
+
+    def preprocess_files(self):
+        pass
+
+
+class GenericIngestionHandler(BaseIngestionHandler):
+    pass
+
+
+class ShapefileIngestionHandler(BaseIngestionHandler):
+
+    def __init__(self, paths):
+        self.base_paths = []
+        for extension, mandatory in SHAPEFILE_COMPONENTS.items():
+            for path in paths:
+                path_extension = uploadhandlers.get_file_extension(path)
+                if path_extension == extension:
+                    self.base_paths.append(path)
+                    break
+            else:
+                if mandatory:
+                    raise RuntimeError("Could not find {!r} shapfile "
+                                       "component file".format(extension))
+
+
+
 
 
 def convert_kml_ground_overlay_to_geotiff(kml_path, other_file_path):

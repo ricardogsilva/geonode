@@ -34,6 +34,8 @@ import os
 import re
 import logging
 
+from . import uploadhandlers
+
 
 logger = logging.getLogger(__name__)
 vector = FeatureType.resource_type
@@ -291,7 +293,7 @@ def _process_zip(zip_path, destination_dir):
     safe_zip_path = _rename_files([zip_path])[0]
     with zipfile.ZipFile(safe_zip_path, "r") as zip_handler:
         if safe_zip_path.endswith(".kmz"):
-            extracted_paths = _extract_zip(zip_handler, destination_dir)
+            extracted_paths = uploadhandlers._extract_zip(zip_handler, destination_dir)
         else:
             extracted_paths = _sanitize_zip_contents(
                 zip_handler, destination_dir)
@@ -308,14 +310,8 @@ def _process_zip(zip_path, destination_dir):
 
 def _sanitize_zip_contents(zip_handler, destination_dir):
     clean_macosx_dir(zip_handler.namelist())
-    result = _extract_zip(zip_handler, destination_dir)
+    result = uploadhandlers._extract_zip(zip_handler, destination_dir)
     return result
-
-
-def _extract_zip(zip_handler, destination):
-    file_names = zip_handler.namelist()
-    zip_handler.extractall(destination)
-    return [os.path.join(destination, p) for p in file_names]
 
 
 def _probe_zip_for_sld(zip_handler, destination_dir):
