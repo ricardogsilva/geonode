@@ -115,7 +115,7 @@ def validate_shapefile_components(possible_filenames):
         for path in possible_filenames:
             additional_name = os.path.splitext(os.path.basename(path))[0]
             matches_main_name = additional_name == base_name
-            extension = os.path.splitext(path)[1][1:]
+            extension = os.path.splitext(path)[1][1:].lower()
             found_component = extension == additional_component.extension
             if found_component and matches_main_name:
                 components.append(additional_component.extension)
