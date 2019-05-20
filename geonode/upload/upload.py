@@ -342,6 +342,10 @@ def save_step(user, uploaded_paths, overwrite=True, mosaic=False,
             mosaic=len(spatial_files) > 1,
             target_store=target_store
         )
+        info = ingestion_handler.analyze_data(files_to_upload)
+        selected_profile = ingestion_handler.select_profile(info)
+        ingestion_handler.update_import_session(
+            import_session, selected_profile)
         upload.import_id = import_session.id
         upload.save()
 

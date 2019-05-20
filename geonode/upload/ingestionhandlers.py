@@ -74,6 +74,15 @@ class BaseIngestionHandler(object):
     def preprocess_files(self):
         pass
 
+    def analyze_data(self, paths):
+        pass
+
+    def select_profile(self, extracted_information):
+        pass
+
+    def update_import_session(self, import_session, profile):
+        pass
+
 
 class GenericIngestionHandler(BaseIngestionHandler):
     pass
